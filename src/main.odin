@@ -89,7 +89,7 @@ local_to_global :: proc(pos: IVec2) -> Vec2 {
 
 get_global_mouse_position :: proc() -> Vec2 {
 	using game_state.camera
-	return rl.GetMousePosition() - offset + target * zoom
+	return rl.GetMousePosition() / zoom - offset / zoom + target
 }
 get_local_mouse_position :: proc() -> IVec2 {
 	return global_to_local(get_global_mouse_position())
@@ -120,10 +120,12 @@ generate_world :: proc(seed: int = 0, frequency: f32 = 1.0, rec: rl.Rectangle) {
 	}
 }
 init :: proc() {
+
+	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
 	cam := rl.Camera2D {
 		zoom   = 1.0,
 		target = {0, 0},
-		offset = {0, 0},
+		offset = size_f / 2,
 	}
 	game_state.camera = cam
 	rl.SetTargetFPS(fps)
@@ -152,8 +154,11 @@ update :: proc() {
 }
 get_fract_mouse_pos :: proc() -> Vec2 {
 	zoom := game_state.camera.zoom
-	mouse_pos := get_global_mouse_position() / 16
-	return Vec2{glsl.fract(mouse_pos.x), glsl.fract(mouse_pos.y)}
+	mouse_pos := get_global_mouse_position() / (zoom * 16)
+	fract_x, fract_y := glsl.fract(mouse_pos.x), glsl.fract(mouse_pos.y)
+	if fract_x < 0 {fract_x = abs(-fract_x - 1)}
+	if fract_y < 0 {fract_y = abs(-fract_y - 1)}
+	return Vec2{fract_x, fract_y}
 }
 
 check_tiles :: proc() {
@@ -211,13 +216,9 @@ draw_tiles :: proc() {
 	using game_state.camera
 	pos := global_to_local(target)
 
-	size := IVec2{auto_cast rl.GetRenderWidth(), auto_cast rl.GetRenderHeight()}
-	game_state.camera.offset = Vec2 {
-		auto_cast rl.GetRenderWidth() / 2,
-		auto_cast rl.GetRenderHeight() / 2,
-	}
-	tiles := global_to_local({auto_cast size.x, auto_cast size.y})
-	fmt.println(local_to_global(tiles) + target)
+
+	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
+	tiles := global_to_local(size_f)
 	for j in -tiles.y ..= tiles.y {
 		for i in -tiles.x ..= tiles.x {
 			key := IVec2{auto_cast i, auto_cast j} + pos
@@ -229,7 +230,7 @@ draw_tiles :: proc() {
 					get_tile_rect(value.type),
 					rect,
 					{0, 0},
-					0.0,
+					0,
 					rl.WHITE,
 				)
 			}
@@ -242,6 +243,8 @@ draw_tiles :: proc() {
 		2,
 		rl.RAYWHITE,
 	)
+	rl.DrawRectangle(auto_cast target.x, auto_cast target.y, 16, 16, rl.WHITE)
+	rl.DrawRectangle(0, 0, i32(16 * zoom), i32(16 * zoom), rl.RAYWHITE)
 }
 game_state: GameState
 main :: proc() {
