@@ -128,7 +128,7 @@ generate_world :: proc(
 	state = fast_noise.create_state(seed + 5)
 	state.frequency = heightmap_freq
 	for i in -i64(rec.width) ..= i64(rec.width) {
-		thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 10, 0) * 30)
+		thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 100, 0) * 30)
 		for j in -i64(rec.height) ..= thres {
 			pos := IVec2{auto_cast i, auto_cast j} + local_pos
 			game_state.tiles[pos] = TileData{.AIR}
