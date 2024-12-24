@@ -18,6 +18,7 @@ game_height :: 100000
 fps :: 256
 Vec2 :: rl.Vector2
 
+
 Sprite :: struct {}
 NPCKind :: enum {
 	ZOMBIE,
@@ -56,10 +57,14 @@ TileData :: struct {
 }
 IVec2 :: [2]i64
 
+Setting :: enum {
+	TICKRATE,
+}
 atlases: [SpriteAtlases]rl.Texture2D
 GameState :: struct {
 	entities: [dynamic]Entity,
 	tiles:    map[IVec2]TileData,
+	settings: [Setting]f32,
 	camera:   rl.Camera2D,
 	seed:     int,
 }
@@ -154,6 +159,10 @@ init :: proc() {
 		rec = {0, 0, 10000, 100},
 		heightmap_freq = 1.0,
 	)
+	init_ui()
+}
+
+init_ui :: proc() {
 }
 
 update :: proc() {
@@ -187,7 +196,7 @@ tick_tiles :: proc() {
 			tile.tick += dt
 			key_plus_one := key
 			key_plus_one.y += 1
-			if tile.tick >= 1.0 {
+			if tile.tick >= 1.0 / game_state.settings[.TICKRATE] {
 				tick(key)
 			}
 		}
@@ -249,6 +258,8 @@ draw :: proc() {
 		20,
 		rl.WHITE,
 	)
+	tickrate := fmt.caprintf("%.0f", game_state.settings[.TICKRATE])
+	rl.GuiSlider({30, 60, 120, 40}, "tps", tickrate, &game_state.settings[.TICKRATE], 1, 100)
 	rl.EndDrawing()
 	free_all(context.temp_allocator)
 }
