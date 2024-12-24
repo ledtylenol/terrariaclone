@@ -52,16 +52,16 @@ TileType :: enum {
 
 TileData :: struct {
 	type: TileType,
+	tick: f32,
 }
 IVec2 :: [2]i64
 
 atlases: [SpriteAtlases]rl.Texture2D
 GameState :: struct {
-	entities:  [dynamic]Entity,
-	tiles:     map[IVec2]TileData,
-	heightmap: [dynamic]i64,
-	camera:    rl.Camera2D,
-	seed:      int,
+	entities: [dynamic]Entity,
+	tiles:    map[IVec2]TileData,
+	camera:   rl.Camera2D,
+	seed:     int,
 }
 get_tile_from_step :: proc(step: f32) -> TileType {
 	type := TileType.DIRT
@@ -120,7 +120,7 @@ generate_world :: proc(
 				f32(local_pos.y) + f32(j),
 			)
 			type := get_tile_from_step(step)
-			tile := TileData{type}
+			tile := TileData{type, 0}
 			pos += local_pos
 			game_state.tiles[pos] = tile
 		}
@@ -131,7 +131,7 @@ generate_world :: proc(
 		thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 100, 0) * 30)
 		for j in -i64(rec.height) ..= thres {
 			pos := IVec2{auto_cast i, auto_cast j} + local_pos
-			game_state.tiles[pos] = TileData{.AIR}
+			game_state.tiles[pos] = TileData{.AIR, 0}
 		}
 	}
 }
@@ -167,13 +167,15 @@ update :: proc() {
 	game_state.camera.target += dir * dt * 500
 	game_state.camera.zoom += rl.GetMouseWheelMove() * 0.1
 	game_state.camera.zoom = clamp(game_state.camera.zoom, 0.3, 3.0)
-	update_sand()
+	tick_tiles()
 	check_tiles()
 }
 
-update_sand :: proc() {
+
+tick_tiles :: proc() {
 	using game_state.camera
 	pos := global_to_local(target)
+	dt := rl.GetFrameTime()
 
 
 	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
@@ -181,15 +183,31 @@ update_sand :: proc() {
 	for j in -tiles.y ..= tiles.y {
 		for i in -tiles.x ..= tiles.x {
 			key := IVec2{auto_cast i, auto_cast j} + pos
+			tile := (&game_state.tiles[key]) or_continue
+			tile.tick += dt
 			key_plus_one := key
 			key_plus_one.y += 1
-			if game_state.tiles[key].type == .SAND && game_state.tiles[key_plus_one].type == .AIR {
-				game_state.tiles[key], game_state.tiles[key_plus_one] =
-					game_state.tiles[key_plus_one], game_state.tiles[key]
+			if tile.tick >= 1.0 {
+				tick(key)
 			}
 		}
 	}
 }
+
+tick :: proc(key: IVec2) {
+	tile := &game_state.tiles[key]
+	tile.tick = 0.0
+	#partial switch tile.type {
+	case .SAND:
+		if next_tile, ok := game_state.tiles[key + IVec2{0, 1}]; ok {
+			if next_tile.type == .AIR {
+				game_state.tiles[key + IVec2{0, 1}], game_state.tiles[key] =
+					game_state.tiles[key], game_state.tiles[key + IVec2{0, 1}]
+			}
+		}
+	}
+}
+
 get_fract_mouse_pos :: proc() -> Vec2 {
 	zoom := game_state.camera.zoom
 	mouse_pos := get_global_mouse_position() / (zoom * 16)
@@ -218,7 +236,14 @@ draw :: proc() {
 	rl.DrawFPS(30, 30)
 	mouse_pos := get_fract_mouse_pos()
 	rl.DrawText(
-		fmt.caprint(get_mouse_tile().type, '\n', mouse_pos, '\n', get_global_mouse_position()),
+		fmt.caprint(
+			get_mouse_tile().type,
+			get_mouse_tile().tick,
+			'\n',
+			mouse_pos,
+			'\n',
+			get_global_mouse_position(),
+		),
 		i32(rl.GetMousePosition().x),
 		i32(rl.GetMousePosition().y) + 15,
 		20,
