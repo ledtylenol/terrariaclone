@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:math/linalg/glsl"
+import "core:math/rand"
 import "core:strings"
 import "core:time"
 import "shared:fast_noise"
@@ -56,10 +57,11 @@ IVec2 :: [2]i64
 
 atlases: [SpriteAtlases]rl.Texture2D
 GameState :: struct {
-	entities: [dynamic]Entity,
-	tiles:    map[IVec2]TileData,
-	camera:   rl.Camera2D,
-	seed:     int,
+	entities:  [dynamic]Entity,
+	tiles:     map[IVec2]TileData,
+	heightmap: [dynamic]i64,
+	camera:    rl.Camera2D,
+	seed:      int,
 }
 get_tile_from_step :: proc(step: f32) -> TileType {
 	type := TileType.DIRT
@@ -103,9 +105,10 @@ generate_world :: proc(seed: int = 0, frequency: f32 = 1.0, rec: rl.Rectangle) {
 
 	local_pos := global_to_local({rec.x, rec.y})
 	for j in -i64(rec.height) ..= i64(rec.height) {
-		for i in -i64(rec.height) ..= i64(rec.width) {
+		for i in -i64(rec.width) ..= i64(rec.width) {
 
 			if (local_pos + IVec2{auto_cast i, auto_cast j}) in game_state.tiles do continue
+			pos := IVec2{auto_cast i, auto_cast j}
 			step := fast_noise.get_noise_2d(
 				&state,
 				f32(local_pos.x) + f32(i),
@@ -113,11 +116,23 @@ generate_world :: proc(seed: int = 0, frequency: f32 = 1.0, rec: rl.Rectangle) {
 			)
 			type := get_tile_from_step(step)
 			tile := TileData{type}
-			pos := IVec2{auto_cast i, auto_cast j}
 			pos += local_pos
 			game_state.tiles[pos] = tile
 		}
 	}
+	state = fast_noise.create_state(seed + 5)
+	state.noise_type = .Perlin
+	state.frequency = frequency
+	state.octaves = 3
+	for i in -i64(rec.width) ..= i64(rec.width) {
+		thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 10, 0) * 30)
+		for j in -i64(rec.height) ..= thres {
+			pos := IVec2{auto_cast i, auto_cast j} + local_pos
+			game_state.tiles[pos] = TileData{.AIR}
+		}
+	}
+}
+generate_heightmap :: proc(seed: int, frequency: f32 = 1.0) {
 }
 init :: proc() {
 
@@ -132,6 +147,7 @@ init :: proc() {
 	atlases[.PLAYER] = rl.LoadTexture("assets/player.png")
 	atlases[.TERRAIN] = rl.LoadTexture("assets/terrain.png")
 	game_state.seed = auto_cast time.time_to_unix(time.now())
+	generate_heightmap(game_state.seed)
 	generate_world(seed = game_state.seed, frequency = 0.1, rec = {0, 0, 10000, 100})
 }
 
