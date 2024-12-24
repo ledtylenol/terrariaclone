@@ -96,7 +96,12 @@ get_global_mouse_position :: proc() -> Vec2 {
 get_local_mouse_position :: proc() -> IVec2 {
 	return global_to_local(get_global_mouse_position())
 }
-generate_world :: proc(seed: int = 0, frequency: f32 = 1.0, rec: rl.Rectangle) {
+generate_world :: proc(
+	seed: int = 0,
+	frequency: f32 = 1.0,
+	rec: rl.Rectangle,
+	heightmap_freq: f32 = 1.0,
+) {
 	// clear_map(&game_state.tiles)
 	state := fast_noise.create_state(seed)
 	state.noise_type = .Perlin
@@ -121,9 +126,7 @@ generate_world :: proc(seed: int = 0, frequency: f32 = 1.0, rec: rl.Rectangle) {
 		}
 	}
 	state = fast_noise.create_state(seed + 5)
-	state.noise_type = .Perlin
-	state.frequency = frequency
-	state.octaves = 3
+	state.frequency = heightmap_freq
 	for i in -i64(rec.width) ..= i64(rec.width) {
 		thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 10, 0) * 30)
 		for j in -i64(rec.height) ..= thres {
@@ -131,8 +134,6 @@ generate_world :: proc(seed: int = 0, frequency: f32 = 1.0, rec: rl.Rectangle) {
 			game_state.tiles[pos] = TileData{.AIR}
 		}
 	}
-}
-generate_heightmap :: proc(seed: int, frequency: f32 = 1.0) {
 }
 init :: proc() {
 
@@ -147,16 +148,16 @@ init :: proc() {
 	atlases[.PLAYER] = rl.LoadTexture("assets/player.png")
 	atlases[.TERRAIN] = rl.LoadTexture("assets/terrain.png")
 	game_state.seed = auto_cast time.time_to_unix(time.now())
-	generate_heightmap(game_state.seed)
-	generate_world(seed = game_state.seed, frequency = 0.1, rec = {0, 0, 10000, 100})
+	generate_world(
+		seed = game_state.seed,
+		frequency = 0.1,
+		rec = {0, 0, 10000, 100},
+		heightmap_freq = 1.0,
+	)
 }
 
 update :: proc() {
 	dt := rl.GetFrameTime()
-	if rl.IsKeyPressed(.R) {
-		pos := game_state.camera.target
-		generate_world(seed = game_state.seed, frequency = 0.1, rec = {pos.x, pos.y, 100, 100})
-	}
 	dir := Vec2{}
 	if rl.IsKeyDown(.A) do dir.x -= 1
 	if rl.IsKeyDown(.D) do dir.x += 1
@@ -166,7 +167,28 @@ update :: proc() {
 	game_state.camera.target += dir * dt * 500
 	game_state.camera.zoom += rl.GetMouseWheelMove() * 0.1
 	game_state.camera.zoom = clamp(game_state.camera.zoom, 0.3, 3.0)
+	update_sand()
 	check_tiles()
+}
+
+update_sand :: proc() {
+	using game_state.camera
+	pos := global_to_local(target)
+
+
+	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
+	tiles := global_to_local(size_f)
+	for j in -tiles.y ..= tiles.y {
+		for i in -tiles.x ..= tiles.x {
+			key := IVec2{auto_cast i, auto_cast j} + pos
+			key_plus_one := key
+			key_plus_one.y += 1
+			if game_state.tiles[key].type == .SAND && game_state.tiles[key_plus_one].type == .AIR {
+				game_state.tiles[key], game_state.tiles[key_plus_one] =
+					game_state.tiles[key_plus_one], game_state.tiles[key]
+			}
+		}
+	}
 }
 get_fract_mouse_pos :: proc() -> Vec2 {
 	zoom := game_state.camera.zoom
