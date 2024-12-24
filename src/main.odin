@@ -259,7 +259,8 @@ draw :: proc() {
 		rl.WHITE,
 	)
 	tickrate := fmt.caprintf("%.0f", game_state.settings[.TICKRATE])
-	rl.GuiSlider({30, 60, 120, 40}, "tps", tickrate, &game_state.settings[.TICKRATE], 1, 100)
+	rect := rl.Rectangle{30, 60, 120, 40}
+	rl.GuiSliderBar(rect, "tps", tickrate, &game_state.settings[.TICKRATE], 1, 100)
 	rl.EndDrawing()
 	free_all(context.temp_allocator)
 }
