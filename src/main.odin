@@ -87,11 +87,11 @@ get_tile_from_step :: proc(step: f32) -> TileType {
 
 global_to_local :: proc(pos: Vec2) -> IVec2 {
 	using game_state.camera
-	return {i64(math.floor(pos.x / (16 * zoom))), i64(math.floor(pos.y / (16 * zoom)))}
+	return {i64(math.floor(pos.x / (8 * zoom))), i64(math.floor(pos.y / (8 * zoom)))}
 }
 local_to_global :: proc(pos: IVec2) -> Vec2 {
 	using game_state.camera
-	return {f32(pos.x) * (16 * zoom), f32(pos.y) * 16 * zoom}
+	return {f32(pos.x) * (8 * zoom), f32(pos.y) * 8 * zoom}
 }
 
 get_global_mouse_position :: proc() -> Vec2 {
@@ -159,6 +159,7 @@ init :: proc() {
 		rec = {0, 0, 10000, 100},
 		heightmap_freq = 1.0,
 	)
+	game_state.settings[.TICKRATE] = 20
 	init_ui()
 }
 
@@ -219,7 +220,7 @@ tick :: proc(key: IVec2) {
 
 get_fract_mouse_pos :: proc() -> Vec2 {
 	zoom := game_state.camera.zoom
-	mouse_pos := get_global_mouse_position() / (zoom * 16)
+	mouse_pos := get_global_mouse_position() / (zoom * 8)
 	fract_x, fract_y := glsl.fract(mouse_pos.x), glsl.fract(mouse_pos.y)
 	if fract_x < 0 {fract_x = abs(-fract_x - 1)}
 	if fract_y < 0 {fract_y = abs(-fract_y - 1)}
@@ -259,7 +260,8 @@ draw :: proc() {
 		rl.WHITE,
 	)
 	tickrate := fmt.caprintf("%.0f", game_state.settings[.TICKRATE])
-	rect := rl.Rectangle{30, 60, 120, 40}
+	rect := rl.Rectangle{60, 60, 120, 40}
+	rl.GuiSetStyle(.DEFAULT, auto_cast rl.GuiDefaultProperty.TEXT_SIZE, 40)
 	rl.GuiSliderBar(rect, "tps", tickrate, &game_state.settings[.TICKRATE], 1, 100)
 	rl.EndDrawing()
 	free_all(context.temp_allocator)
@@ -299,7 +301,7 @@ draw_tiles :: proc() {
 			key := IVec2{auto_cast i, auto_cast j} + pos
 			if value, ok := game_state.tiles[key]; ok {
 				global_pos := local_to_global(key)
-				rect := rl.Rectangle{global_pos.x, global_pos.y, 16 * zoom, 16 * zoom}
+				rect := rl.Rectangle{global_pos.x, global_pos.y, 8 * zoom, 8 * zoom}
 				rl.DrawTexturePro(
 					atlases[.TERRAIN],
 					get_tile_rect(value.type),
@@ -314,12 +316,12 @@ draw_tiles :: proc() {
 	}
 	f_pos := local_to_global(global_to_local(get_global_mouse_position()))
 	rl.DrawRectangleLinesEx(
-		{auto_cast f_pos.x, auto_cast f_pos.y, 16 * zoom, 16 * zoom},
+		{auto_cast f_pos.x, auto_cast f_pos.y, 8 * zoom, 8 * zoom},
 		2,
 		rl.RAYWHITE,
 	)
-	rl.DrawRectangle(auto_cast target.x, auto_cast target.y, 16, 16, rl.WHITE)
-	rl.DrawRectangle(0, 0, i32(16 * zoom), i32(16 * zoom), rl.RAYWHITE)
+	rl.DrawRectangle(auto_cast target.x, auto_cast target.y, 8, 8, rl.WHITE)
+	rl.DrawRectangle(0, 0, i32(8 * zoom), i32(8 * zoom), rl.RAYWHITE)
 }
 game_state: GameState
 main :: proc() {
