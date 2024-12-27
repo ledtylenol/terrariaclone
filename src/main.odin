@@ -55,6 +55,10 @@ TileData :: struct {
 	type: TileType,
 	tick: f32,
 }
+
+Chunk :: struct {
+	tiles: [32][32]TileData,
+}
 IVec2 :: [2]i64
 
 Setting :: enum {
@@ -63,7 +67,7 @@ Setting :: enum {
 atlases: [SpriteAtlases]rl.Texture2D
 GameState :: struct {
 	entities: #soa[dynamic]Entity,
-	tiles:    map[IVec2]TileData,
+	chunks:   map[IVec2]Chunk,
 	settings: [Setting]f32,
 	camera:   rl.Camera2D,
 	seed:     int,
@@ -89,9 +93,27 @@ global_to_local :: proc(pos: Vec2) -> IVec2 {
 	using game_state.camera
 	return {i64(math.floor(pos.x / (8 * zoom))), i64(math.floor(pos.y / (8 * zoom)))}
 }
+global_to_chunk :: proc(pos: Vec2) -> IVec2 {
+	using game_state.camera
+	return {i64(math.floor(pos.x / (8 * 32 * zoom))), i64(math.floor(pos.y / (8 * 32 * zoom)))}
+}
 local_to_global :: proc(pos: IVec2) -> Vec2 {
 	using game_state.camera
 	return {f32(pos.x) * (8 * zoom), f32(pos.y) * 8 * zoom}
+}
+
+chunk_fract :: proc(pos: Vec2) -> IVec2 {
+	chunk := global_to_chunk(pos) * 8
+	local := global_to_local(pos)
+	return local - chunk
+}
+chunk_to_global :: proc(pos: IVec2) -> Vec2 {
+	using game_state.camera
+	return {f32(pos.x) * (8 * 32 * zoom), f32(pos.y) * (8 * 32 * zoom)}
+}
+
+global_pos_in_chunk :: proc(c_pos: IVec2, tile_pos: IVec2) -> Vec2 {
+	return local_to_global(tile_pos) + chunk_to_global(c_pos)
 }
 
 get_global_mouse_position :: proc() -> Vec2 {
@@ -100,6 +122,9 @@ get_global_mouse_position :: proc() -> Vec2 {
 }
 get_local_mouse_position :: proc() -> IVec2 {
 	return global_to_local(get_global_mouse_position())
+}
+get_chunk_mouse_position :: proc() -> IVec2 {
+	return global_to_chunk(get_global_mouse_position())
 }
 generate_world :: proc(
 	seed: int = 0,
@@ -113,30 +138,31 @@ generate_world :: proc(
 	state.frequency = frequency
 	state.octaves = 3
 
-	local_pos := global_to_local({rec.x, rec.y})
-	for j in -i64(rec.height) ..= i64(rec.height) {
-		for i in -i64(rec.width) ..= i64(rec.width) {
+	local_pos := global_to_chunk({rec.x, rec.y})
+	local_scale := global_to_chunk({rec.width, rec.height})
 
-			if (local_pos + IVec2{auto_cast i, auto_cast j}) in game_state.tiles do continue
-			pos := IVec2{auto_cast i, auto_cast j}
-			step := fast_noise.get_noise_2d(
-				&state,
-				f32(local_pos.x) + f32(i),
-				f32(local_pos.y) + f32(j),
-			)
-			type := get_tile_from_step(step)
-			tile := TileData{type, 0}
-			pos += local_pos
-			game_state.tiles[pos] = tile
+	for y in 0 ..< local_scale.y {
+		for x in 0 ..< local_scale.x {
+			chunk := Chunk{}
+			for cy in 0 ..< 32 {
+				for cx in 0 ..< 32 {
+					pos := global_pos_in_chunk(IVec2{x, y}, IVec2{auto_cast cx, auto_cast cy})
+					tile := TileData{}
+					tile.type = get_tile_from_step(fast_noise.get_noise_2d(&state, pos.x, pos.y))
+
+					chunk.tiles[cy][cx] = tile}
+			}
 		}
 	}
 	state = fast_noise.create_state(seed + 5)
 	state.frequency = heightmap_freq
 	for i in -i64(rec.width) ..= i64(rec.width) {
-		thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 100, 0) * 30)
-		for j in -i64(rec.height) ..= thres {
-			pos := IVec2{auto_cast i, auto_cast j} + local_pos
-			game_state.tiles[pos] = TileData{.AIR, 0}
+		chunk := game_state.chunks[IVec2{0, i} + local_pos]
+		for z in 0 ..< 32 {
+			thres := i64(fast_noise.get_noise_2d(&state, f32(i) / 100 + f32(z) / 100, 0) * 30)
+			for j in 0 ..= thres {
+				chunk.tiles[j][z] = TileData{.AIR, 0}
+			}
 		}
 	}
 }
@@ -178,41 +204,37 @@ update :: proc() {
 	game_state.camera.zoom += rl.GetMouseWheelMove() * 0.1
 	game_state.camera.zoom = clamp(game_state.camera.zoom, 0.3, 3.0)
 	tick_tiles()
-	check_tiles()
 }
 
 
 tick_tiles :: proc() {
 	using game_state.camera
-	pos := global_to_local(target)
+	pos := global_to_chunk(target)
 	dt := rl.GetFrameTime()
-
-
 	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
-	tiles := global_to_local(size_f)
-	for j in -tiles.y ..= tiles.y {
-		for i in -tiles.x ..= tiles.x {
-			key := IVec2{auto_cast i, auto_cast j} + pos
-			tile := (&game_state.tiles[key]) or_continue
-			tile.tick += dt
-			key_plus_one := key
-			key_plus_one.y += 1
-			if tile.tick >= 1.0 / game_state.settings[.TICKRATE] {
-				tick(key)
-			}
+	chunks := global_to_chunk(size_f)
+
+	for y in -chunks.y ..= chunks.y {
+
+		for x in -chunks.x ..= chunks.x {
+			tick(IVec2{x, y} + pos)
 		}
 	}
 }
 
-tick :: proc(key: IVec2) {
-	tile := &game_state.tiles[key]
-	tile.tick = 0.0
-	#partial switch tile.type {
-	case .SAND:
-		if next_tile, ok := game_state.tiles[key + IVec2{0, 1}]; ok {
-			if next_tile.type == .AIR {
-				game_state.tiles[key + IVec2{0, 1}], game_state.tiles[key] =
-					game_state.tiles[key], game_state.tiles[key + IVec2{0, 1}]
+tick :: proc(chunk_pos: IVec2) {
+	chunk := &game_state.chunks[chunk_pos]
+	for &tile_row, y in chunk.tiles {
+		for &tile, x in tile_row {
+			#partial switch tile.type {
+			case .SAND:
+				if y >= 31 {
+					break
+				}
+				next_tile := &chunk.tiles[y + 1][x]
+				if next_tile.type == .AIR {
+					next_tile^, tile = tile, next_tile^
+				}
 			}
 		}
 	}
@@ -227,15 +249,7 @@ get_fract_mouse_pos :: proc() -> Vec2 {
 	return Vec2{fract_x, fract_y}
 }
 
-check_tiles :: proc() {
-	current_tile := get_local_mouse_position()
-	if rl.IsMouseButtonPressed(.LEFT) {
-		if tile, ok := &game_state.tiles[current_tile]; ok {
-			fmt.println("we have ", tile.type, " ", current_tile)
-			tile.type = .AIR
-		}
-	}
-}
+
 draw :: proc() {
 	rl.BeginDrawing()
 	rl.BeginMode2D(game_state.camera)
@@ -245,20 +259,15 @@ draw :: proc() {
 	rl.EndMode2D()
 	rl.DrawFPS(30, 30)
 	mouse_pos := get_fract_mouse_pos()
-	rl.DrawText(
-		fmt.caprint(
-			get_mouse_tile().type,
-			get_mouse_tile().tick,
-			'\n',
-			mouse_pos,
-			'\n',
-			get_global_mouse_position(),
-		),
-		i32(rl.GetMousePosition().x),
-		i32(rl.GetMousePosition().y) + 15,
-		20,
-		rl.WHITE,
-	)
+	if tile, ok := get_mouse_tile(); ok {
+		rl.DrawText(
+			fmt.caprint(tile.type, tile.tick, '\n', mouse_pos, '\n', get_global_mouse_position()),
+			i32(rl.GetMousePosition().x),
+			i32(rl.GetMousePosition().y) + 15,
+			20,
+			rl.WHITE,
+		)
+	}
 	tickrate := fmt.caprintf("%.0f", game_state.settings[.TICKRATE])
 	rect := rl.Rectangle{60, 60, 120, 40}
 	rl.GuiSetStyle(.DEFAULT, auto_cast rl.GuiDefaultProperty.TEXT_SIZE, 40)
@@ -267,13 +276,16 @@ draw :: proc() {
 	free_all(context.temp_allocator)
 }
 
-get_mouse_tile :: proc() -> TileData {
+get_mouse_tile :: proc() -> (TileData, bool) {
 	data := TileData{}
-	local := get_local_mouse_position()
-	if tile, ok := game_state.tiles[local]; ok {
-		return tile
+	local := get_chunk_mouse_position()
+	tile := TileData{}
+	if chunk, ok := game_state.chunks[local]; ok {
+		fract := chunk_fract(get_global_mouse_position())
+		tile = chunk.tiles[fract.y][fract.x]
+		return tile, true
 	}
-	return TileData{}
+	return tile, false
 }
 get_tile_rect :: proc(data: TileType) -> rl.Rectangle {
 	r: rl.Rectangle
@@ -291,27 +303,30 @@ get_tile_rect :: proc(data: TileType) -> rl.Rectangle {
 }
 draw_tiles :: proc() {
 	using game_state.camera
-	pos := global_to_local(target)
+	pos := global_to_chunk(target)
 
 
 	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
-	tiles := global_to_local(size_f)
-	for j in -tiles.y ..= tiles.y {
-		for i in -tiles.x ..= tiles.x {
-			key := IVec2{auto_cast i, auto_cast j} + pos
-			if value, ok := game_state.tiles[key]; ok {
-				global_pos := local_to_global(key)
-				rect := rl.Rectangle{global_pos.x, global_pos.y, 8 * zoom, 8 * zoom}
-				rl.DrawTexturePro(
-					atlases[.TERRAIN],
-					get_tile_rect(value.type),
-					rect,
-					{0, 0},
-					0,
-					rl.WHITE,
-				)
-			}
+	tiles := global_to_chunk(size_f)
+	for j in 0 ..= tiles.y {
+		for i in 0 ..= tiles.x {
+			key := IVec2{j, i} + pos
+			chunk := game_state.chunks[key] or_continue
+			for row, y in chunk.tiles {
+				for tile, x in row {
+					rect := get_tile_rect(tile.type)
+					global_pos := global_pos_in_chunk(key, IVec2{auto_cast x, auto_cast y})
 
+					rl.DrawTexturePro(
+						atlases[.TERRAIN],
+						rect,
+						{global_pos.x, global_pos.y, 8 * zoom, 8 * zoom},
+						{0, 0},
+						0.0,
+						rl.WHITE,
+					)
+				}
+			}
 		}
 	}
 	f_pos := local_to_global(global_to_local(get_global_mouse_position()))
