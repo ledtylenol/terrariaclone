@@ -62,7 +62,7 @@ Setting :: enum {
 }
 atlases: [SpriteAtlases]rl.Texture2D
 GameState :: struct {
-	entities: [dynamic]Entity,
+	entities: #soa[dynamic]Entity,
 	tiles:    map[IVec2]TileData,
 	settings: [Setting]f32,
 	camera:   rl.Camera2D,
@@ -324,6 +324,8 @@ draw_tiles :: proc() {
 	rl.DrawRectangle(0, 0, i32(8 * zoom), i32(8 * zoom), rl.RAYWHITE)
 }
 game_state: GameState
+
+
 main :: proc() {
 	rl.SetConfigFlags({.WINDOW_RESIZABLE})
 	rl.InitWindow(auto_cast width, auto_cast height, "Terraria Clone")
