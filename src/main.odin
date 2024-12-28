@@ -67,23 +67,24 @@ Setting :: enum {
 }
 atlases: [SpriteAtlases]rl.Texture2D
 GameState :: struct {
-	entities: #soa[dynamic]Entity,
-	chunks:   map[IVec2]Chunk,
-	settings: [Setting]f32,
-	camera:   rl.Camera2D,
-	seed:     int,
+	entities:        #soa[dynamic]Entity,
+	chunks:          map[IVec2]Chunk,
+	settings:        [Setting]f32,
+	camera:          rl.Camera2D,
+	seed:            int,
+	tiles_on_screen: u64,
 }
 get_tile_from_step :: proc(step: f32) -> TileType {
 	type := TileType.DIRT
 	switch step {
 	case -1.0 ..< 0.0:
-		type = .STONE
-	case 0.2 ..< 0.5:
+		type = .AIR
+	case 0.0 ..< 0.2:
 		type = .SAND
-	case 0.5 ..< 0.7:
+	case 0.2 ..< 0.7:
 		type = .DIRT
 	case:
-		type = .AIR
+		type = .STONE
 	}
 
 	return type
@@ -100,10 +101,14 @@ generate_world :: proc(
 		chunk_pos: IVec2,
 		state:     ^fast_noise.FNL_State,
 		chunk:     Chunk,
+		width:     i64,
 	}
-	generate_chunk :: proc(t: thread.Task) {
+	generate_chunk :: proc(using t: thread.Task) {
 		datas := cast(^[]ThreadGen)t.data
-		local_pos: IVec2 = {auto_cast t.user_index % 32, auto_cast t.user_index / 32}
+		local_pos: IVec2 = {
+			auto_cast (user_index % int(datas[0].width)),
+			auto_cast (t.user_index / int(datas[0].width)),
+		}
 		x, y := local_pos.x, local_pos.y
 		state := datas[t.user_index].state
 		chunk := Chunk{}
@@ -118,7 +123,6 @@ generate_world :: proc(
 			}
 		}
 		datas[t.user_index].chunk = chunk
-		fmt.println("thread done ", local_pos)
 
 	}
 	// clear_map(&game_state.tiles)
@@ -140,13 +144,13 @@ generate_world :: proc(
 	for y in 0 ..< local_scale.y {
 		for x in 0 ..< local_scale.x {
 			pos := IVec2{x, y}
-			datas[x + 32 * y] = ThreadGen{pos, &state, {}}
+			datas[x + i64(rec.width) * y] = ThreadGen{pos, &state, {}, i64(rec.width)}
 			thread.pool_add_task(
 				&pool,
 				allocator = context.allocator,
 				procedure = generate_chunk,
 				data = &datas,
-				user_index = int(x + 32 * y),
+				user_index = int(x + i64(rec.width) * y),
 			)
 		}
 	}
@@ -186,7 +190,7 @@ init :: proc() {
 	generate_world(
 		seed = game_state.seed,
 		frequency = 0.1,
-		rec = {0, 0, 40, 10},
+		rec = {0, 0, 400, 100},
 		heightmap_freq = 1.0,
 	)
 	game_state.settings[.TICKRATE] = 20
@@ -214,12 +218,10 @@ update :: proc() {
 tick_tiles :: proc() {
 	using game_state.camera
 	pos := global_to_chunk(target)
-	dt := rl.GetFrameTime()
 	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
 	chunks := global_to_chunk(size_f)
 
-	for y in -chunks.y ..= chunks.y {
-
+	for y := chunks.y; y >= -chunks.y; y -= 1 {
 		for x in -chunks.x ..= chunks.x {
 			tick(IVec2{x, y} + pos)
 		}
@@ -227,23 +229,62 @@ tick_tiles :: proc() {
 }
 
 tick :: proc(chunk_pos: IVec2) {
+	dt := rl.GetFrameTime()
 	if chunk, ok := &game_state.chunks[chunk_pos]; ok {
-		for &tile_row, y in chunk.tiles {
-			for &tile, x in tile_row {
+		for y := 31; y >= 0; y -= 1 {
+			for x := 0; x <= 31; x += 1 {
+				tile := &chunk.tiles[y][x]
+				tile.tick += dt
+				if tile.tick < 1.0 / game_state.settings[.TICKRATE] {
+					continue
+				}
 				#partial switch tile.type {
 				case .SAND:
 					if y == 31 {
-						next_chunk := (&game_state.chunks[chunk_pos + {0, 1}]) or_break
+						local_x := x
+						next_chunk: ^Chunk
+						next_chunk = (&game_state.chunks[chunk_pos + {0, 1}]) or_break
 						if next_chunk.tiles[0][x].type == .AIR {
-							next_chunk.tiles[0][x], tile = tile, next_chunk.tiles[0][x]
+							next_chunk.tiles[0][x], tile^ = tile^, next_chunk.tiles[0][x]
+							next_chunk.tiles[0][x].tick = 0
 						}
+						if x == 31 {
+							next_chunk = (&game_state.chunks[chunk_pos + {1, 1}]) or_break
+							local_x = 0
+						} else if x == 0 {
+							next_chunk = (&game_state.chunks[chunk_pos + {-1, 1}]) or_break
+							local_x = 31
+						}
+						if next_chunk.tiles[0][local_x].type == .AIR {
+							next_chunk.tiles[0][local_x], tile^ =
+								tile^, next_chunk.tiles[0][local_x]
+							next_chunk.tiles[0][local_x].tick = 0
+						}
+						tile.tick = 0
 						break
 					} else if y == 32 {break}
 					next_tile := &chunk.tiles[y + 1][x]
 					if next_tile.type == .AIR {
-						next_tile^, tile = tile, next_tile^
+						next_tile^, tile^ = tile^, next_tile^
+						next_tile.tick = 0
+					} else if x == 31 || x == 0 {
+						next_chunk := (&game_state.chunks[chunk_pos + {1 * i64(x == 31) + -1 * i64(x == 0), 0}]) or_break
+						next_tile = &next_chunk.tiles[y + 1][31 * i64(x == 0)]
+						if next_tile.type == .AIR {
+							next_tile^, tile^ = tile^, next_tile^
+							next_tile.tick = 0
+						}
+					} else if chunk.tiles[y + 1][x + 1].type == .AIR {
+						next_tile = &chunk.tiles[y + 1][x + 1]
+						next_tile^, tile^ = tile^, next_tile^
+						next_tile.tick = 0
+					} else if chunk.tiles[y + 1][x - 1].type == .AIR {
+						next_tile = &chunk.tiles[y + 1][x - 1]
+						next_tile^, tile^ = tile^, next_tile^
+						next_tile.tick = 0
 					}
 				}
+				tile.tick = 0.0
 			}
 		}
 	}
@@ -290,6 +331,13 @@ draw :: proc() {
 	rect := rl.Rectangle{60, 60, 120, 40}
 	rl.GuiSetStyle(.DEFAULT, auto_cast rl.GuiDefaultProperty.TEXT_SIZE, 40)
 	rl.GuiSliderBar(rect, "tps", tickrate, &game_state.settings[.TICKRATE], 1, 100)
+	rl.DrawText(
+		fmt.caprintf("tiles on screen: %d", game_state.tiles_on_screen),
+		30,
+		90,
+		20,
+		rl.RAYWHITE,
+	)
 	rl.EndDrawing()
 	free_all(context.temp_allocator)
 }
@@ -323,14 +371,19 @@ draw_tiles :: proc() {
 	using game_state.camera
 	pos := global_to_chunk(target)
 
-	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
+	size_f := Vec2{f32(rl.GetRenderWidth()) / zoom, f32(rl.GetRenderHeight()) / zoom}
 	tiles := global_to_chunk(size_f)
+
+	game_state.tiles_on_screen = 0
 	for j in -tiles.y - 1 ..= tiles.y + 1 {
 		for i in -tiles.x - 1 ..= tiles.x + 1 {
 			key := IVec2{j, i} + pos
 			chunk := game_state.chunks[key] or_continue
 			for row, y in chunk.tiles {
 				for tile, x in row {
+					if tile.type == .AIR {
+						continue
+					}
 					rect := get_tile_rect(tile.type)
 					global_pos := global_pos_in_chunk(key, IVec2{auto_cast x, auto_cast y})
 
@@ -342,6 +395,7 @@ draw_tiles :: proc() {
 						0.0,
 						rl.WHITE,
 					)
+					game_state.tiles_on_screen += 1
 				}
 			}
 		}
