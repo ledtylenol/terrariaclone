@@ -221,8 +221,8 @@ tick_tiles :: proc() {
 	size_f := Vec2{f32(rl.GetRenderWidth()), f32(rl.GetRenderHeight())}
 	chunks := global_to_chunk(size_f)
 
-	for y := chunks.y; y >= -chunks.y; y -= 1 {
-		for x in -chunks.x ..= chunks.x {
+	for y := chunks.y + 1; y >= -chunks.y - 1; y -= 1 {
+		for x in -chunks.x - 1 ..= chunks.x + 1 {
 			tick(IVec2{x, y} + pos)
 		}
 	}
@@ -249,11 +249,22 @@ tick :: proc(chunk_pos: IVec2) {
 							next_chunk.tiles[0][x].tick = 0
 						}
 						if x == 31 {
-							next_chunk = (&game_state.chunks[chunk_pos + {1, 1}]) or_break
-							local_x = 0
+							next_tile := &next_chunk.tiles[0][x - 1]
+							if next_tile.type == .AIR {
+								local_x = 30
+							} else {
+								next_chunk = (&game_state.chunks[chunk_pos + {1, 1}]) or_break
+								local_x = 0
+							}
 						} else if x == 0 {
-							next_chunk = (&game_state.chunks[chunk_pos + {-1, 1}]) or_break
-							local_x = 31
+							next_tile := &next_chunk.tiles[0][x + 1]
+							if next_tile.type == .AIR {
+								local_x = 1
+								break
+							} else {
+								next_chunk = (&game_state.chunks[chunk_pos + {-1, 1}]) or_break
+								local_x = 31
+							}
 						}
 						if next_chunk.tiles[0][local_x].type == .AIR {
 							next_chunk.tiles[0][local_x], tile^ =
@@ -267,9 +278,26 @@ tick :: proc(chunk_pos: IVec2) {
 					if next_tile.type == .AIR {
 						next_tile^, tile^ = tile^, next_tile^
 						next_tile.tick = 0
-					} else if x == 31 || x == 0 {
-						next_chunk := (&game_state.chunks[chunk_pos + {1 * i64(x == 31) + -1 * i64(x == 0), 0}]) or_break
-						next_tile = &next_chunk.tiles[y + 1][31 * i64(x == 0)]
+					} else if x == 31 {
+						if chunk.tiles[y + 1][x - 1].type == .AIR {
+							next_tile = &chunk.tiles[y + 1][x - 1]
+						} else {
+							next_chunk := (&game_state.chunks[chunk_pos + {1, 0}]) or_break
+							next_tile = &next_chunk.tiles[y + 1][0]
+						}
+						if next_tile.type == .AIR {
+							next_tile^, tile^ = tile^, next_tile^
+							next_tile.tick = 0
+						}
+
+					} else if x == 0 {
+
+						if chunk.tiles[y + 1][x + 1].type == .AIR {
+							next_tile = &chunk.tiles[y + 1][x + 1]
+						} else {
+							next_chunk := (&game_state.chunks[chunk_pos - {1, 0}]) or_break
+							next_tile = &next_chunk.tiles[y + 1][31]
+						}
 						if next_tile.type == .AIR {
 							next_tile^, tile^ = tile^, next_tile^
 							next_tile.tick = 0
